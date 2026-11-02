@@ -202,6 +202,11 @@ textarea{width:100%;min-height:140px;resize:vertical;line-height:1.5}
 .gs{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-size:13px}
 .blank{height:8px;width:46%;background:var(--line)}
 .gr.new{animation:pop 1.3s ease-out}
+.st-name.rolling{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+.st-name.lock{animation:lock .6s ease-out}
+@keyframes lock{from{color:var(--accent)}to{color:var(--text)}}
+.gcard.roll{border-color:var(--brand-hi);background:var(--panel2)}
+.speed{display:inline-flex;align-items:center;gap:8px}
 @keyframes pop{from{background:var(--brand);color:var(--on-brand)}to{background:transparent}}
 .kv{display:grid;grid-template-columns:minmax(120px,max-content) minmax(0,1fr);gap:10px 22px;margin:0}
 .kv dt{color:var(--muted)}
@@ -229,7 +234,7 @@ textarea{width:100%;min-height:140px;resize:vertical;line-height:1.5}
   .kv{grid-template-columns:minmax(0,1fr)}
   .kv dd{margin-bottom:6px}
 }
-@media (prefers-reduced-motion:reduce){.gr.new{animation:none}#toast{transition:none}}
+@media (prefers-reduced-motion:reduce){.gr.new,.st-name.lock{animation:none}#toast{transition:none}}
 </style>
 
 <div class="wrap">
@@ -339,7 +344,9 @@ textarea{width:100%;min-height:140px;resize:vertical;line-height:1.5}
         <button class="btn" type="button" data-act="all" id="b-all">Показать всех</button>
         <button class="btn" type="button" data-act="restart" id="b-restart">Показ сначала</button>
         <button class="btn" type="button" data-act="reset" id="b-reset">Сбросить жеребьёвку</button>
-        <span class="keys">Пробел или стрелка вправо: следующий</span>
+        <label class="speed"><span class="lbl">Ролл</span><select id="speed" aria-label="Длительность каждого ролла">
+          <option value="slow">5 с</option><option value="mid">2 с</option><option value="fast">0,7 с</option><option value="off">Без анимации</option></select></label>
+        <span class="keys">Пробел или стрелка вправо: следующий, во время ролла: пропустить</span>
       </div>
       <div class="groups" id="d-groups"></div>
       <div class="card">
@@ -365,6 +372,7 @@ var KEY='piala-draw-v1', TKEY='piala-draw-theme';
 var LET='ABCDEFGHIJKLMNOP';
 var BKN=['Лучшие по скиллу','Чуть слабее','Ещё слабее','Самые слабые'];
 var TABS=['people','rules','draw'];
+var SP={slow:{T:5000,hold:900},mid:{T:2000,hold:450},fast:{T:700,hold:150},off:{T:0,hold:0}};
 var RT={apart:'Разные группы',together:'Одна группа',fix:'Закреплён',ban:'Исключён'};
 var HINTS={
   apart:'Эти двое окажутся в разных группах и не встретятся на групповом этапе.',
@@ -372,6 +380,7 @@ var HINTS={
   fix:'Участник попадёт только в выбранную группу.',
   ban:'Участник не попадёт в выбранную группу.'
 };
+function speedKey(){var k=S.speed;if(!k||!SP[k])k=matchMedia('(prefers-reduced-motion: reduce)').matches?'off':'slow';return k}
 var q=function(s,r){return (r||document).querySelector(s)};
 var qa=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
 var esc=function(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
@@ -393,7 +402,7 @@ function normCode(s){return String(s||'').toUpperCase().replace(/\s+/g,'').slice
 /* ---------- состояние ---------- */
 function defaults(){
   var skills=[97,95,93,91,90,88,85,83,82,80,78,77,74,72,71,69,67,66,62,60,58,55,53,50];
-  return {v:1,demo:true,tab:'people',showSkill:false,nextId:25,nextRule:4,
+  return {v:1,demo:true,tab:'people',showSkill:false,speed:null,nextId:25,nextRule:4,
     people:skills.map(function(s,i){return {id:i+1,name:'Игрок '+('0'+(i+1)).slice(-2),skill:s,basket:0}}),
     rules:[{id:1,t:'apart',a:3,b:9},{id:2,t:'apart',a:15,b:20},{id:3,t:'ban',a:22,g:0}],
     draw:null};
@@ -418,7 +427,7 @@ function sanitize(r){
   });
   var draw=null;
   if(r.draw&&typeof r.draw.code==='string'&&r.draw.code){draw={code:normCode(r.draw.code),step:Math.max(0,parseInt(r.draw.step,10)||0),fp:String(r.draw.fp||'')}}
-  return {v:1,demo:!!r.demo,tab:TABS.indexOf(r.tab)>=0?r.tab:'people',showSkill:!!r.showSkill,
+  return {v:1,demo:!!r.demo,tab:TABS.indexOf(r.tab)>=0?r.tab:'people',showSkill:!!r.showSkill,speed:(r.speed&&SP[r.speed])?r.speed:null,
     nextId:Math.max(parseInt(r.nextId,10)||0,maxId)+1,nextRule:Math.max(parseInt(r.nextRule,10)||0,maxR)+1,
     people:people,rules:rules,draw:draw};
 }
@@ -847,10 +856,12 @@ function renderDraw(){
   var pg=q('#prog');pg.style.gridTemplateColumns='repeat('+N+',1fr)';pg.innerHTML=prog;
   q('#pg-a').textContent='Открыто '+st+' из '+N;
   q('#pg-b').textContent=st>=N?'Жеребьёвка завершена':'Дальше: корзина '+(Math.floor(D.order[st]/G)+1);
-  renderStage(st>0?D.order[st-1]:null,null);
-  q('#b-next').disabled=busy||st>=N;
+  if(!busy)renderStage(st>0?D.order[st-1]:null,null);
+  q('#b-next').disabled=st>=N;
+  q('#b-next').textContent=busy?'Пропустить':'Следующий';
   q('#b-all').disabled=busy||st>=N;
   q('#b-restart').disabled=busy||st===0;
+  q('#speed').value=speedKey();
   q('#b-copy').disabled=st===0;q('#b-png').disabled=st===0;
   // группы
   var rev=[];for(var k=0;k<N;k++)rev.push(false);
@@ -902,17 +913,65 @@ function startDraw(){
   if(!res){toast('Не удалось найти расклад под правила. Проверьте шаг 2.',true);return}
   S.draw={code:code,step:0,fp:fp};lastNew=null;save();render();
 }
+var rollTimers=[],rollI=null;
+function clearRoll(){rollTimers.forEach(clearTimeout);rollTimers=[]}
+function later(ms,fn){rollTimers.push(setTimeout(fn,ms))}
+/* моменты смены кадров: сначала часто, к концу всё реже, последний кадр попадает ровно в T */
+function rollOffsets(T){
+  var n=Math.max(6,Math.round(T/230)),a=0.15,o=[];
+  for(var k=1;k<=n;k++){var x=k/n;o.push(Math.round(T*(a*x+(1-a)*x*x)))}
+  return o;
+}
+function roll(items,target,T,show,done){
+  var off=rollOffsets(T),last=null,n=off.length;
+  off.forEach(function(ms,k){
+    later(ms,function(){
+      var v=target;
+      if(k<n-1){
+        for(var t=0;t<12;t++){
+          v=items[Math.floor(Math.random()*items.length)];
+          if(items.length<2||(v!==last&&!(k===n-2&&v===target)))break;
+        }
+      }
+      last=v;show(v,k===n-1);
+      if(k===n-1)done();
+    });
+  });
+}
+function commitPick(i){
+  clearRoll();busy=false;rollI=null;
+  if(!S.draw)return;
+  S.draw.step++;lastNew=i;save();render();
+}
 function next(){
-  if(!D||busy||S.draw.step>=M.N)return;
-  var i=D.order[S.draw.step],reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function commit(){S.draw.step++;lastNew=i;busy=false;save();render()}
-  if(reduced){commit();return}
-  busy=true;
-  q('#b-next').disabled=true;q('#b-all').disabled=true;q('#b-restart').disabled=true;
-  var t=0,G=M.G,iv=setInterval(function(){
-    renderStage(i,LET[Math.floor(Math.random()*G)]);
-    if(++t>=11){clearInterval(iv);commit()}
-  },65);
+  if(!D)return;
+  if(busy){commitPick(rollI);return}
+  if(S.draw.step>=M.N)return;
+  var i=D.order[S.draw.step],b=D.C.b[i],G=M.G,sp=SP[speedKey()];
+  if(!sp.T){commitPick(i);return}
+  busy=true;rollI=i;
+  var rev={};for(var s=0;s<S.draw.step;s++)rev[D.order[s]]=true;
+  var pool=[];for(var k=b*G;k<(b+1)*G;k++)if(!rev[k])pool.push(k);
+  var groups=pool.map(function(x){return D.A[x]});
+  var nm=q('#st-name'),stg=q('#st-g'),meta=q('#st-meta'),cards=qa('.gcard');
+  q('#b-next').textContent='Пропустить';q('#b-all').disabled=true;q('#b-restart').disabled=true;
+  q('#st-lbl').innerHTML='<span class="bb b'+(b+1)+'">'+(b+1)+'</span>&nbsp; Корзина '+(b+1)+' · '+BKN[b];
+  meta.textContent='Шаг 1 из 2: кто выпадет из корзины';
+  stg.textContent='?';nm.className='st-name rolling';
+  cards.forEach(function(c){c.classList.remove('hot','roll')});
+  var T1=pool.length===1?Math.min(sp.T,700):sp.T,T2=groups.length===1?Math.min(sp.T,700):sp.T;
+  roll(pool,i,T1,function(v,landed){
+    nm.textContent=D.C.ppl[v].p.name;
+    if(landed)nm.className='st-name lock';
+  },function(){
+    later(sp.hold,function(){
+      meta.textContent='Шаг 2 из 2: в какую группу попадёт участник';
+      roll(groups,D.A[i],T2,function(g){
+        stg.textContent=LET[g];
+        cards.forEach(function(c,ci){c.classList.toggle('roll',ci===g)});
+      },function(){later(Math.round(sp.hold*0.6),function(){commitPick(i)})});
+    });
+  });
 }
 function resultText(){
   var st=S.draw.step,G=M.G,rev={};
@@ -1070,7 +1129,7 @@ document.addEventListener('click',function(e){
     case 'next':next();break;
     case 'all':if(D&&!busy){S.draw.step=M.N;lastNew=null;save();render()}break;
     case 'restart':if(D&&!busy){S.draw.step=0;lastNew=null;save();render()}break;
-    case 'reset':arm(t,'Точно сбросить?',function(){S.draw=null;lastNew=null;save();render();toast('Жеребьёвка сброшена')});break;
+    case 'reset':arm(t,'Точно сбросить?',function(){clearRoll();busy=false;rollI=null;S.draw=null;lastNew=null;save();render();toast('Жеребьёвка сброшена')});break;
     case 'copycode':copyText(D.code,'Код скопирован');break;
     case 'copytext':if(D)copyText(resultText(),'Итог скопирован');break;
     case 'png':if(D){makePNG().then(function(b){if(b)saveFile('piala-zherebyovka.png',b,'image/png');else toast('Не удалось собрать картинку',true)})}break;
@@ -1078,6 +1137,7 @@ document.addEventListener('click',function(e){
 });
 document.addEventListener('change',function(e){
   var t=e.target;
+  if(t.id==='speed'){S.speed=t.value;save();return}
   if(t.id==='c-skill'){S.showSkill=t.checked;save();render();return}
   if(t.id==='imp'){
     var f=t.files&&t.files[0];if(!f)return;
